@@ -4,6 +4,7 @@ import (
     "flag"
     "log"
     "time"
+    "fmt"
 
     "github.com/AdRoll/goamz/aws"
     "github.com/AdRoll/goamz/dynamodb"
@@ -61,10 +62,6 @@ func read(tableName string, auth *aws.Auth, region aws.Region,
                 for _, item := range items {
                     work <- item
                     count += 1
-                    if count >= 10 {
-                        return
-                    }
-                    log.Printf("reading %s", count)
                 }
             }else{
                 // fixme
@@ -83,6 +80,7 @@ func batch_shoot(table *dynamodb.Table, batch [][]dynamodb.Attribute) error {
     }
     bw := table.BatchWriteItems(m)
     _, err := bw.Execute()
+    fmt.Printf(".")
 
     return err
 }
