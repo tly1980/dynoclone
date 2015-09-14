@@ -77,7 +77,7 @@ func read(tableName string, auth *aws.Auth, region aws.Region,
     }
 }
 
-func batch_shoot(table *dynamodb.Table, batch [][]dynamodb.Attribute{}) error{
+func batch_shoot(table *dynamodb.Table, batch [][]dynamodb.Attribute) error {
     m := map[string][][]dynamodb.Attribute{
         "Put": batch,
     }
