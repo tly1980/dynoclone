@@ -20,8 +20,8 @@ var region = flag.String("r", "ap-southeast-2", "Region. Default would be Sydney
 
 const READ_BATCH = 100
 
-func finish(done *chan bool){
-    *done <- true
+func finish(done chan bool){
+    done <- true
 }
 
 func read(tableName string, auth *aws.Auth, region aws.Region,
@@ -29,7 +29,7 @@ func read(tableName string, auth *aws.Auth, region aws.Region,
         segid int, totalSeg int, 
         work chan map[string]*dynamodb.Attribute, 
         done chan bool){
-    defer finish(&done) // To signal that job is done
+    defer finish(done) // To signal that job is done
     server := dynamodb.New(*auth, region)
 
     //just test the connection to dyno table
@@ -95,7 +95,7 @@ func write(
     tableName string, auth *aws.Auth, region aws.Region,
     batchSize int,
     work chan map[string]*dynamodb.Attribute, done chan bool){
-    defer finish(&done) // To signal that job is done
+    defer finish(done) // To signal that job is done
     server := dynamodb.New(*auth, region)
 
     //just test the connection to dyno table
