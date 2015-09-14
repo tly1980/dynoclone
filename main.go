@@ -57,7 +57,7 @@ func read(tableName string, auth *aws.Auth, region aws.Region,
 
         for startKey != nil {
             items, startKey, err = table.ParallelScanPartialLimit(
-                attributeComparisons, nil, segid, totalSeg, READ_BATCH)
+                attributeComparisons, startKey, segid, totalSeg, READ_BATCH)
             if err == nil {
                 for _, item := range items {
                     work <- item
@@ -78,6 +78,7 @@ func batch_shoot(table *dynamodb.Table, batch [][]dynamodb.Attribute) error {
     m := map[string][][]dynamodb.Attribute{
         "Put": batch,
     }
+
     bw := table.BatchWriteItems(m)
     unprocessed, err := bw.Execute()
     if err != nil {
