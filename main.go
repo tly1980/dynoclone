@@ -82,7 +82,7 @@ func batch_shoot(table *dynamodb.Table, batch [][]dynamodb.Attribute) error {
     bw := table.BatchWriteItems(m)
     unprocessed, err := bw.Execute()
     if err != nil {
-        fmt.Printf("unprocessed: %v\n", unprocessed)
+        fmt.Printf("unprocessed: %v\n", len(unprocessed))
     }else{
         fmt.Printf(".")
     }
@@ -120,7 +120,7 @@ func write(
             err = batch_shoot(table, batch)
             if err != nil {
                 // fixme
-                log.Printf("Failed to save DB: %v\n", err.Error())
+                log.Printf("Failed to save DB(1): %v\n", err.Error())
                 //log.Printf("Batch =: %v\n", batch)
             }
             batch = nil
@@ -132,7 +132,7 @@ func write(
         err = batch_shoot(table, batch)
         if err != nil {
             // fixme
-            log.Printf("Failed to save DB: %v\n", err.Error())
+            log.Printf("Failed to save DB(2): %v\n", err.Error())
             //log.Printf("Batch =: %v\n", batch)
         }
         batch = nil
