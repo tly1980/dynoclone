@@ -179,9 +179,15 @@ func main(){
     }
 
     //wait for read
-    <-done
+    for i :=0 ; i < *numIn; i ++ {
+        <-done
+    }
+    
 
     close(work)
     //wiat for write
-    <-done
+    for j := 0; j < *numOut; j++ {
+        <-done
+    }
+    close(done)
 }
