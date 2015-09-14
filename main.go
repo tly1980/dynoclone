@@ -150,7 +150,7 @@ func map_to_item(obj map[string]*dynamodb.Attribute) *[]dynamodb.Attribute {
 
 func write_2_std(
     work chan map[string]*dynamodb.Attribute, done chan bool){
-    defer finish(&done)
+    defer finish(done)
     for i := range work{
         log.Printf("%v", map_to_item(i))
     }
