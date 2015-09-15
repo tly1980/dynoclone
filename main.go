@@ -50,7 +50,7 @@ func newRegulator(desire_tps, batch_size int, group_size int) *Regulator{
 func (self *Regulator) time_it() (float64, float64) {
     now := time.Now()
     delta := now.Sub(self.last_timestamp)
-    self.last_timestamp := now
+    self.last_timestamp = now
     tps := self.batch_size / delta.Seconds()
     // return current_tps, sleep_duration
     return tps, self.desire_duration - ONEfloat64 / tps
