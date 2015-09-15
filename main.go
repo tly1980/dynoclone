@@ -209,8 +209,6 @@ func main(){
     auth, err := aws.GetAuth("", "", "", time.Now())
     aws_region := aws.Regions[*region]
 
-    reg := newRegulator(*tps, *batchSize, *numOut)
-
     if err != nil {
         log.Fatal("Failed to auth", err)
     }
@@ -223,6 +221,7 @@ func main(){
     }
     //go write_2_std(work, done)
     for j := 0; j < *numOut; j++ {
+        reg := newRegulator(*tps, *batchSize, *numOut)
         go write(
             *tableDst, &auth, aws_region,
             *batchSize, work, done, reg)
