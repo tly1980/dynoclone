@@ -33,8 +33,9 @@ type Regulator struct {
     last_timestamp time.Time
 }
 
-func newRegulator(desire_tps, batch_size int) *Regulator{
-    desire_duration := ONEfloat64 / float64(desire_tps) / float64(batch_size)
+func newRegulator(desire_tps, batch_size int, group_size int) *Regulator{
+    desire_duration := ONEfloat64 / 
+        (float64(desire_tps) / float64(group_size * batch_size))
     log.Printf("desire_tps: %v, desire_duration: %v, batch_size: %v\n", 
         desire_tps, desire_duration, batch_size)
     return &Regulator{ 
@@ -208,7 +209,7 @@ func main(){
     auth, err := aws.GetAuth("", "", "", time.Now())
     aws_region := aws.Regions[*region]
 
-    reg := newRegulator(*tps, *batchSize)
+    reg := newRegulator(*tps, *batchSize, *numOut)
 
     if err != nil {
         log.Fatal("Failed to auth", err)
