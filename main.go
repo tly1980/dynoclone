@@ -55,6 +55,7 @@ func (self *Regulator) finish_batch(batch_size int) {
 
         if delta.Seconds() <= 1.0 && delta.Seconds() > 0 {
             time.Sleep(delta)
+            fmt.Printf("S")
         }
         self.last_sleep = &now
     }
