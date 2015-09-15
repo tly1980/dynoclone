@@ -59,7 +59,7 @@ func (self *Regulator) sleep(){
     _, duration := self.time_it()
 
     if duration > 0.0 {
-        to_sleep := time.Duration(duration * time.Second)
+        to_sleep := time.Duration(duration * 1000000000)
         log.Printf("x")
         time.Sleep(to_sleep)
     }
