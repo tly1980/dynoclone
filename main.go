@@ -13,16 +13,51 @@ import (
 var numIn = flag.Int("numIn", 4, "Number of DynamoDB read thread")
 var numOut = flag.Int("numOut", 4, "Number of DynamoDB read thread")
 var batchSize = flag.Int("batchSize", 10, "size for DynamoDB batch write")
+var tps = flag.Int("tps", 1000, "Default TPS")
 
 var tableSrc = flag.String("src", "", "Src table name")
 var tableDst = flag.String("dst", "", "Dst table name")
 var region = flag.String("r", "ap-southeast-2", "Region. Default would be Sydney.")
 
 const READ_BATCH = 100
+const ONEfloat64 float64 = 1.0
 
 func finish(done chan bool){
     done <- true
 }
+
+type Regulator struct {
+    desire_tps float64
+    batch_size float64
+    desire_duration float64
+    last_timestamp time.Time
+}
+
+func newRegulator(desire_tps, batch_size int) *Regulator{
+    return &Regulator{ 
+            float64(desire_tps),
+            float64(batch_size),
+            float64(desire_tps) / ONEfloat64,
+            time.Now(),
+        }
+
+}
+
+func (self *Regulator) time_it() (float64, float64) {
+    now := time.Now()
+    delta := now.Sub(self.last_timestamp)
+    tps := self.batch_size / delta.Seconds()
+    // return current_tps, sleep_duration
+    return tps, self.desire_duration - tps / ONEfloat64
+}
+
+func (self *Regulator) sleep(){
+    _, duration := self.time_it()
+    if duration > 0.0 {
+        time.Sleep(time.Duration(duration) * time.Second)
+    }
+}
+
 
 func read(tableName string, auth *aws.Auth, region aws.Region,
         attributeComparisons []dynamodb.AttributeComparison, 
@@ -94,7 +129,8 @@ func batch_shoot(table *dynamodb.Table, batch [][]dynamodb.Attribute) error {
 func write(
     tableName string, auth *aws.Auth, region aws.Region,
     batchSize int,
-    work chan map[string]*dynamodb.Attribute, done chan bool){
+    work chan map[string]*dynamodb.Attribute, done chan bool,
+    regulator *Regulator){
     defer finish(done) // To signal that job is done
     server := dynamodb.New(*auth, region)
 
@@ -117,6 +153,7 @@ func write(
         batch = append(batch, *item)
         
         if len(batch) == batchSize {
+            regulator.sleep()
             err = batch_shoot(table, batch)
             if err != nil {
                 // fixme
@@ -129,6 +166,7 @@ func write(
 
     if len(batch) > 0 {
         // will do that again if batch isn't empty
+        regulator.sleep()
         err = batch_shoot(table, batch)
         if err != nil {
             // fixme
@@ -163,6 +201,8 @@ func main(){
     auth, err := aws.GetAuth("", "", "", time.Now())
     aws_region := aws.Regions[*region]
 
+    reg := newRegulator(*tps, *batchSize)
+
     if err != nil {
         log.Fatal("Failed to auth", err)
     }
@@ -175,7 +215,9 @@ func main(){
     }
     //go write_2_std(work, done)
     for j := 0; j < *numOut; j++ {
-        go write(*tableDst,  &auth, aws_region, *batchSize,  work, done)
+        go write(
+            *tableDst, &auth, aws_region,
+            *batchSize, work, done, reg)
     }
 
     //wait for read
