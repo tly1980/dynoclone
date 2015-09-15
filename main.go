@@ -50,10 +50,13 @@ func newRegulator(desire_tps, batch_size int, group_size int) *Regulator{
 func (self *Regulator) time_it() (float64, float64) {
     now := time.Now()
     delta := now.Sub(self.last_timestamp)
-    self.last_timestamp = now
     tps := self.batch_size / delta.Seconds()
     // return current_tps, sleep_duration
     return tps, self.desire_duration - ONEfloat64 / tps
+}
+
+func (self *Regulator) update(){
+    self.last_timestamp = time.Now()
 }
 
 func (self *Regulator) sleep(){
@@ -84,7 +87,6 @@ func read(tableName string, auth *aws.Auth, region aws.Region,
     if err != nil {
         log.Fatal("Could not BuildPrimaryKey", err)
     }
-
 
     table := server.NewTable(tableName, pk)
 
@@ -117,13 +119,15 @@ func read(tableName string, auth *aws.Auth, region aws.Region,
     }
 }
 
-func batch_shoot(table *dynamodb.Table, batch [][]dynamodb.Attribute) error {
+func batch_shoot(table *dynamodb.Table, batch [][]dynamodb.Attribute, regulator *Regulator) error {
+    regulator.sleep()
     m := map[string][][]dynamodb.Attribute{
         "Put": batch,
     }
 
     bw := table.BatchWriteItems(m)
     unprocessed, err := bw.Execute()
+    regulator.update()
     if err != nil {
         fmt.Printf("unprocessed: %v\n", len(unprocessed))
     }else{
@@ -161,8 +165,7 @@ func write(
         batch = append(batch, *item)
         
         if len(batch) == batchSize {
-            regulator.sleep()
-            err = batch_shoot(table, batch)
+            err = batch_shoot(table, batch, regulator)
             if err != nil {
                 // fixme
                 log.Printf("Failed to save DB(1): %v\n", err.Error())
@@ -174,8 +177,7 @@ func write(
 
     if len(batch) > 0 {
         // will do that again if batch isn't empty
-        regulator.sleep()
-        err = batch_shoot(table, batch)
+        err = batch_shoot(table, batch, regulator)
         if err != nil {
             // fixme
             log.Printf("Failed to save DB(2): %v\n", err.Error())
