@@ -54,7 +54,9 @@ func (self *Regulator) time_it() (float64, float64) {
 func (self *Regulator) sleep(){
     _, duration := self.time_it()
     if duration > 0.0 {
-        time.Sleep(time.Duration(duration) * time.Second)
+        to_sleep := time.Duration(duration) * time.Second
+        log.Printf("sleep: %v", to_sleep)
+        time.Sleep(to_sleep)
     }
 }
 
