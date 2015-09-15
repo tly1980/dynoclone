@@ -20,52 +20,41 @@ var tableDst = flag.String("dst", "", "Dst table name")
 var region = flag.String("r", "ap-southeast-2", "Region. Default would be Sydney.")
 
 const READ_BATCH = 100
-const ONEfloat64 float64 = 1.0
 
 func finish(done chan bool){
     done <- true
 }
 
 type Regulator struct {
-    desire_tps float64
-    batch_size float64
-    desire_duration float64
-    last_timestamp time.Time
+    desire_tps int
+    count int
+    last_sleep *time.Time
 }
 
-func newRegulator(desire_tps, batch_size int, group_size int) *Regulator{
-    desire_duration := ONEfloat64 / 
-        (float64(desire_tps) / float64(group_size * batch_size))
-    log.Printf("desire_tps: %v, desire_duration: %v, batch_size: %v\n", 
-        desire_tps, desire_duration, batch_size)
+func newRegulator(desire_tps int) *Regulator{
+    log.Printf("desire_tps: %v", desire_tps)
     return &Regulator{ 
-            float64(desire_tps),
-            float64(batch_size),
-            desire_duration,
-            time.Now(),
+        desire_tps,
+        0,
+        nil,
+    }
+}
+
+func (self *Regulator) finish_batch(batch_size int) {
+    self.count += batch_size
+    if self.count >= self.desire_tps {
+        self.count = 0
+        now := time.Now()
+        if self.last_sleep == nil {
+            time.Sleep(1 * time.Second)
+        } else {
+            
+            delta := now.Sub(*self.last_sleep)
+            if delta.Seconds() <= 1.0 {
+                time.Sleep(delta)
+            }
         }
-
-}
-
-func (self *Regulator) time_it() (float64, float64) {
-    now := time.Now()
-    delta := now.Sub(self.last_timestamp)
-    tps := self.batch_size / delta.Seconds()
-    // return current_tps, sleep_duration
-    return tps, self.desire_duration - delta.Seconds()
-}
-
-func (self *Regulator) update(){
-    self.last_timestamp = time.Now()
-}
-
-func (self *Regulator) sleep(){
-    _, duration := self.time_it()
-
-    if duration > 0.0 {
-        to_sleep := time.Duration(duration * 1000000000)
-        fmt.Printf("S")
-        time.Sleep(to_sleep)
+        self.last_sleep = &now
     }
 }
 
@@ -120,21 +109,19 @@ func read(tableName string, auth *aws.Auth, region aws.Region,
 }
 
 func batch_shoot(table *dynamodb.Table, batch [][]dynamodb.Attribute, regulator *Regulator) error {
-    regulator.sleep()
+    batch_count := len(batch)
     m := map[string][][]dynamodb.Attribute{
         "Put": batch,
     }
 
     bw := table.BatchWriteItems(m)
     unprocessed, err := bw.Execute()
-    regulator.update()
+    regulator.finish_batch(batch_count)
     if err != nil {
         fmt.Printf("unprocessed: %v\n", len(unprocessed))
     }else{
         fmt.Printf(".")
     }
-    
-
     return err
 }
 
@@ -223,7 +210,7 @@ func main(){
     }
     //go write_2_std(work, done)
     for j := 0; j < *numOut; j++ {
-        reg := newRegulator(*tps, *batchSize, *numOut)
+        reg := newRegulator(*tps)
         go write(
             *tableDst, &auth, aws_region,
             *batchSize, work, done, reg)
