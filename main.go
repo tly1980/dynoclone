@@ -28,7 +28,7 @@ func finish(done chan bool){
 type Regulator struct {
     desire_tps int
     count int
-    last_sleep *time.Time
+    last_fullfilled *time.Time
 }
 
 func newRegulator(desire_tps int) *Regulator{
@@ -41,23 +41,25 @@ func newRegulator(desire_tps int) *Regulator{
 }
 
 func (self *Regulator) finish_batch(batch_size int) {
-    delta := time.Duration(0 * time.Second)
+    var delta time.Duration = 0
     self.count += batch_size
     if self.count >= self.desire_tps {
         self.count = 0
         now := time.Now()
 
-        if self.last_sleep == nil {
-            delta = time.Duration(1 * time.Second)
+        if self.last_fullfilled == nil {
+            fmt.Printf("s")
+            time.Sleep(time.Duration(1 * time.Second))
         } else {
-            delta = now.Sub(*self.last_sleep)
+            delta = now.Sub(*self.last_fullfilled)
+            to_sleep := 1 * time.Second - delta
+            if to_sleep > 0 {
+                fmt.Printf("S")
+                time.Sleep(to_sleep)
+            }
         }
 
-        if delta.Seconds() <= 1.0 && delta.Seconds() > 0 {
-            time.Sleep(delta)
-            fmt.Printf("S")
-        }
-        self.last_sleep = &now
+        self.last_fullfilled = &now
     }
 }
 
