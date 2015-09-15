@@ -52,7 +52,7 @@ func (self *Regulator) time_it() (float64, float64) {
     delta := now.Sub(self.last_timestamp)
     tps := self.batch_size / delta.Seconds()
     // return current_tps, sleep_duration
-    return tps, self.desire_duration - ONEfloat64 / tps
+    return tps, self.desire_duration - delta.Seconds()
 }
 
 func (self *Regulator) update(){
@@ -131,7 +131,7 @@ func batch_shoot(table *dynamodb.Table, batch [][]dynamodb.Attribute, regulator 
     if err != nil {
         fmt.Printf("unprocessed: %v\n", len(unprocessed))
     }else{
-        fmt.Printf(".")
+        //fmt.Printf(".")
     }
     
 
