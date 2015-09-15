@@ -34,10 +34,13 @@ type Regulator struct {
 }
 
 func newRegulator(desire_tps, batch_size int) *Regulator{
+    desire_duration := ONEfloat64 / float64(desire_tps)
+    log.Printf("desire_tps: %v, desire_duration: %v, batch_size: %v\n", 
+        desire_tps, desire_duration, batch_size)
     return &Regulator{ 
             float64(desire_tps),
             float64(batch_size),
-            float64(desire_tps) / ONEfloat64,
+            desire_duration,
             time.Now(),
         }
 
@@ -54,6 +57,7 @@ func (self *Regulator) time_it() (float64, float64) {
 func (self *Regulator) sleep(){
     _, duration := self.time_it()
     if duration > 0.0 {
+        log.Printf("sleep: %v", duration)
         to_sleep := time.Duration(duration) * time.Second
         log.Printf("sleep: %v", to_sleep)
         time.Sleep(to_sleep)
