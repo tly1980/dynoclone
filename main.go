@@ -41,18 +41,20 @@ func newRegulator(desire_tps int) *Regulator{
 }
 
 func (self *Regulator) finish_batch(batch_size int) {
+    delta := time.Duration(0 * time.Second)
     self.count += batch_size
     if self.count >= self.desire_tps {
         self.count = 0
         now := time.Now()
+
         if self.last_sleep == nil {
-            time.Sleep(1 * time.Second)
+            delta = time.Duration(1 * time.Second)
         } else {
-            
-            delta := now.Sub(*self.last_sleep)
-            if delta.Seconds() <= 1.0 {
-                time.Sleep(delta)
-            }
+            delta = now.Sub(*self.last_sleep)
+        }
+
+        if delta.Seconds() <= 1.0 && delta.Seconds() > 0 {
+            time.Sleep(delta)
         }
         self.last_sleep = &now
     }
