@@ -34,7 +34,7 @@ type Regulator struct {
 }
 
 func newRegulator(desire_tps, batch_size int) *Regulator{
-    desire_duration := ONEfloat64 / float64(desire_tps) / float(batch_size)
+    desire_duration := ONEfloat64 / float64(desire_tps) / float64(batch_size)
     log.Printf("desire_tps: %v, desire_duration: %v, batch_size: %v\n", 
         desire_tps, desire_duration, batch_size)
     return &Regulator{ 
