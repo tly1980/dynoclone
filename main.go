@@ -131,7 +131,7 @@ func batch_shoot(table *dynamodb.Table, batch [][]dynamodb.Attribute, regulator 
     if err != nil {
         fmt.Printf("unprocessed: %v\n", len(unprocessed))
     }else{
-        //fmt.Printf(".")
+        fmt.Printf(".")
     }
     
 
