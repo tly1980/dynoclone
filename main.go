@@ -61,7 +61,7 @@ func (self *Regulator) sleep(){
 
     if duration > 0.0 {
         to_sleep := time.Duration(duration * 1000000000)
-        fmt.Printf("x")
+        fmt.Printf("S")
         time.Sleep(to_sleep)
     }
 }
