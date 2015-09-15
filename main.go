@@ -51,11 +51,12 @@ func (self *Regulator) time_it() (float64, float64) {
     delta := now.Sub(self.last_timestamp)
     tps := self.batch_size / delta.Seconds()
     // return current_tps, sleep_duration
-    return tps, self.desire_duration - tps / ONEfloat64
+    return tps, self.desire_duration - ONEfloat64 / tps
 }
 
 func (self *Regulator) sleep(){
     _, duration := self.time_it()
+    log.
     if duration > 0.0 {
         log.Printf("sleep: %v", duration)
         to_sleep := time.Duration(duration) * time.Second
