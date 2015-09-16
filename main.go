@@ -20,48 +20,42 @@ var tableDst = flag.String("dst", "", "Dst table name")
 var region = flag.String("r", "ap-southeast-2", "Region. Default would be Sydney.")
 
 const READ_BATCH = 100
+const WORK2_BUFFER = 10000
 
 func finish(done chan bool){
     done <- true
 }
 
-type Regulator struct {
-    desire_tps int
-    count int
-    last_fullfilled *time.Time
-}
 
-func newRegulator(desire_tps int) *Regulator{
-    log.Printf("desire_tps: %v", desire_tps)
-    return &Regulator{ 
-        desire_tps,
-        0,
-        nil,
-    }
-}
+func regulator_thread(desire_tps int, 
+    work chan map[string]*dynamodb.Attribute,
+    work2 chan map[string]*dynamodb.Attribute,
+    done chan bool){
 
-func (self *Regulator) finish_batch(batch_size int) {
-    var delta time.Duration = 0
-    self.count += batch_size
-    if self.count >= self.desire_tps {
-        self.count = 0
-        now := time.Now()
+    defer finish(&done)
 
-        if self.last_fullfilled == nil {
-            fmt.Printf("s")
-            time.Sleep(time.Duration(1 * time.Second))
-        } else {
-            delta = now.Sub(*self.last_fullfilled)
-            to_sleep := 1 * time.Second - delta
-            if to_sleep > 0 {
-                fmt.Printf("S")
-                time.Sleep(to_sleep)
+    desire_tp_01s := desire_tps / 10
+    duration_01s := 100 * time.Millisecond 
+    fmt.Printf("desire_tp_01s: %v, duration_01s: %v\n",
+        desire_tp_01s, duration_01s)
+    
+    //defer close(tick) // cannot close receive only channel
+    i := 0
+    t1 := time.Now()
+    for w := range work {
+        work2 <- w
+        i++
+        if i % desire_tp_01s == 0 {
+            t2 := time.Now()
+            delta := duration_01s - t2.Sub(t1)
+            if delta > 0 {
+                time.Sleep(delta)
             }
+            t1 = time.Now()
         }
-
-        self.last_fullfilled = &now
     }
 }
+
 
 
 func read(tableName string, auth *aws.Auth, region aws.Region,
@@ -113,15 +107,14 @@ func read(tableName string, auth *aws.Auth, region aws.Region,
     }
 }
 
-func batch_shoot(table *dynamodb.Table, batch [][]dynamodb.Attribute, regulator *Regulator) error {
-    batch_count := len(batch)
+func batch_shoot(table *dynamodb.Table, batch [][]dynamodb.Attribute) error {
     m := map[string][][]dynamodb.Attribute{
         "Put": batch,
     }
 
     bw := table.BatchWriteItems(m)
     unprocessed, err := bw.Execute()
-    regulator.finish_batch(batch_count)
+
     if err != nil {
         fmt.Printf("unprocessed: %v\n", len(unprocessed))
     }else{
@@ -133,8 +126,7 @@ func batch_shoot(table *dynamodb.Table, batch [][]dynamodb.Attribute, regulator 
 func write(
     tableName string, auth *aws.Auth, region aws.Region,
     batchSize int,
-    work chan map[string]*dynamodb.Attribute, done chan bool,
-    regulator *Regulator){
+    work chan map[string]*dynamodb.Attribute, done chan bool){
     defer finish(done) // To signal that job is done
     server := dynamodb.New(*auth, region)
 
@@ -157,7 +149,7 @@ func write(
         batch = append(batch, *item)
         
         if len(batch) == batchSize {
-            err = batch_shoot(table, batch, regulator)
+            err = batch_shoot(table, batch)
             if err != nil {
                 // fixme
                 log.Printf("Failed to save DB(1): %v\n", err.Error())
@@ -169,7 +161,7 @@ func write(
 
     if len(batch) > 0 {
         // will do that again if batch isn't empty
-        err = batch_shoot(table, batch, regulator)
+        err = batch_shoot(table, batch)
         if err != nil {
             // fixme
             log.Printf("Failed to save DB(2): %v\n", err.Error())
@@ -208,27 +200,36 @@ func main(){
     }
 
     work := make(chan map[string]*dynamodb.Attribute, *numIn)
+    work2 := make(chan map[string]*dynamodb.Attribute, WORK2_BUFFER)
     done := make(chan bool)
 
+    // read (4) => speed regulator (1) => write (4)
+
     for i := 0; i < *numIn; i++ {
-        go read(*tableSrc, &auth, aws_region, default_cond, i, *numIn,  work, done)
+        go read(
+            *tableSrc, &auth, aws_region, default_cond, i, *numIn,  work, done)
     }
-    //go write_2_std(work, done)
+
+    // start a regulator to control the speed
+    go regulator_thread(*tps, work, work2)
+
     for j := 0; j < *numOut; j++ {
-        reg := newRegulator(*tps)
         go write(
-            *tableDst, &auth, aws_region,
-            *batchSize, work, done, reg)
+            *tableDst, &auth, aws_region, *batchSize, work2, done)
     }
 
     //wait for read
     for i :=0 ; i < *numIn; i ++ {
         <-done
     }
-    
-
     close(work)
-    //wiat for write
+
+    // wait for regulator
+    <-done
+
+    close(work2)
+
+    //wait for write
     for j := 0; j < *numOut; j++ {
         <-done
     }
