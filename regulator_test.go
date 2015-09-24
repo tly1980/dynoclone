@@ -30,6 +30,7 @@ func check(work chan map[string]*dynamodb.Attribute){
 func Test1(t *testing.T){
     w1 := make(chan map[string]*dynamodb.Attribute)
     w2 := make(chan map[string]*dynamodb.Attribute)
+    done := make(chan bool)
     go check(w2)
     go regulator_thread(1000, w1, w2)
 

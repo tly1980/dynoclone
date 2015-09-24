@@ -5,6 +5,7 @@ import (
     "log"
     "time"
     "fmt"
+    "sync"
 
     "github.com/AdRoll/goamz/aws"
     "github.com/AdRoll/goamz/dynamodb"
@@ -19,20 +20,35 @@ var tableSrc = flag.String("src", "", "Src table name")
 var tableDst = flag.String("dst", "", "Dst table name")
 var region = flag.String("r", "ap-southeast-2", "Region. Default would be Sydney.")
 
+var GLOBAL_STATS = map[string]int64{}
+
 const READ_BATCH = 100
 const WORK2_BUFFER = 10000
+var RETRY_SLEEP_SEQUENCE = []time.Duration{
+    time.Millisecond * 400,
+    time.Millisecond * 800,
+    time.Millisecond * 1600, 
+    time.Millisecond * 3200,
+    time.Millisecond * 6400,
+}
 
-func finish(done chan bool){
-    done <- true
+type Stat struct {
+    src string
+    op_type string
+    count int
+}
+
+func finish(
+    done chan string, role string){
+    done <- role
 }
 
 
 func regulator_thread(desire_tps int, 
     work chan map[string]*dynamodb.Attribute,
     work2 chan map[string]*dynamodb.Attribute,
-    done chan bool){
-
-    defer finish(&done)
+    done chan string){
+    defer finish(done, "regulator")
 
     desire_tp_01s := desire_tps / 10
     duration_01s := 100 * time.Millisecond 
@@ -57,13 +73,36 @@ func regulator_thread(desire_tps int,
 }
 
 
+func stat_collect_thread(stats chan Stat, 
+    done chan string){
+    for s := range stats {
+        key := fmt.Sprint("%s.%s", s.src, s.op_type)
+        total, ok := GLOBAL_STATS[key]
+
+        if ok != true {
+            total = int64(0)
+        }
+
+        total += int64(s.count)
+        GLOBAL_STATS[key] = total
+    }
+
+    done <- "stat_collector"
+}
+
+
+
 
 func read(tableName string, auth *aws.Auth, region aws.Region,
         attributeComparisons []dynamodb.AttributeComparison, 
         segid int, totalSeg int, 
-        work chan map[string]*dynamodb.Attribute, 
-        done chan bool){
-    defer finish(done) // To signal that job is done
+        work chan map[string]*dynamodb.Attribute,
+        done chan string,
+        stats chan Stat){
+    src := fmt.Sprintf("reader [%v]", segid)
+    defer finish(done, src) // To signal that job is done
+    
+    optype := "ok:read"
     server := dynamodb.New(*auth, region)
 
     //just test the connection to dyno table
@@ -88,6 +127,13 @@ func read(tableName string, auth *aws.Auth, region aws.Region,
             count += 1
         }
 
+        if count >= 1000 {
+            // send stat
+            stats <- Stat { src, optype, count }
+            count = 0
+        }
+
+
         for startKey != nil {
             items, startKey, err = table.ParallelScanPartialLimit(
                 attributeComparisons, startKey, segid, totalSeg, READ_BATCH)
@@ -95,39 +141,82 @@ func read(tableName string, auth *aws.Auth, region aws.Region,
                 for _, item := range items {
                     work <- item
                     count += 1
+
+                    if count >= 1000 {
+                        // send stat
+                        stats <- Stat { src, optype, count }
+                        count = 0
+                    }
+
                 }
+
             }else{
                 // fixme
                 log.Fatal("failed to scan", err)
             }
         }
+
     }else{
         // fixme
         log.Fatal("failed to scan", err)
     }
+
+    // send stat
+    stats <- Stat{src, optype, count}
 }
 
-func batch_shoot(table *dynamodb.Table, batch [][]dynamodb.Attribute) error {
+
+func batch_shoot(src string, stats chan Stat, table *dynamodb.Table, batch [][]dynamodb.Attribute) error {
+ 
     m := map[string][][]dynamodb.Attribute{
         "Put": batch,
     }
 
     bw := table.BatchWriteItems(m)
-    unprocessed, err := bw.Execute()
 
-    if err != nil {
-        fmt.Printf("unprocessed: %v\n", len(unprocessed))
-    }else{
-        fmt.Printf(".")
+    var err error
+    var unprocessed map[string]interface {}
+    max_retry_seq := len(RETRY_SLEEP_SEQUENCE) - 1
+
+
+    for i, t := range RETRY_SLEEP_SEQUENCE {
+        unprocessed, err = bw.Execute()
+
+        if err == nil && len(unprocessed) == 0 {
+            stats <- Stat {src, "ok:write", len(batch)}
+            return nil
+        }
+
+        if err != nil && len(unprocessed) > 0{
+            // unprocessed is not [][]dynamodb.Attribute 
+            // So we just resent the whole batch 
+            time.Sleep(t)
+            bw = table.BatchWriteItems(m)
+
+            if i < max_retry_seq {
+                stats <- Stat { src, "resend", 1}
+            }
+        }
     }
+
+    stats <- Stat { 
+        src, 
+        fmt.Sprintf("err:%s", err.Error()), 
+        1,
+    }
+
     return err
 }
 
 func write(
+    writer_id int,
     tableName string, auth *aws.Auth, region aws.Region,
     batchSize int,
-    work chan map[string]*dynamodb.Attribute, done chan bool){
-    defer finish(done) // To signal that job is done
+    work chan map[string]*dynamodb.Attribute,
+    done chan string,
+    stats chan Stat){
+    src := fmt.Sprintf("writer [%d]", writer_id)
+    defer finish(done, src) // To signal that job is done
     server := dynamodb.New(*auth, region)
 
     //just test the connection to dyno table
@@ -149,7 +238,7 @@ func write(
         batch = append(batch, *item)
         
         if len(batch) == batchSize {
-            err = batch_shoot(table, batch)
+            err = batch_shoot(src, stats, table, batch)
             if err != nil {
                 // fixme
                 log.Printf("Failed to save DB(1): %v\n", err.Error())
@@ -161,7 +250,7 @@ func write(
 
     if len(batch) > 0 {
         // will do that again if batch isn't empty
-        err = batch_shoot(table, batch)
+        err = batch_shoot(src, stats, table, batch)
         if err != nil {
             // fixme
             log.Printf("Failed to save DB(2): %v\n", err.Error())
@@ -180,12 +269,27 @@ func map_to_item(obj map[string]*dynamodb.Attribute) *[]dynamodb.Attribute {
     return &items
 }
 
-func write_2_std(
-    work chan map[string]*dynamodb.Attribute, done chan bool){
-    defer finish(done)
-    for i := range work{
-        log.Printf("%v", map_to_item(i))
+func monitor_thread(){
+    c := time.Tick(1000 * time.Second)
+    for _ = range c {
+        show_stat()
     }
+}
+
+var SHOW_STAT = &sync.Mutex{}
+
+func show_stat(){
+    SHOW_STAT.Lock()
+    defer SHOW_STAT.Unlock()
+    fmt.Printf("\033[H\033[2J")
+    for k, v := range GLOBAL_STATS{
+        fmt.Printf("%s: %v\n", k, v)
+    }
+}
+
+func drain(done chan string){
+    who := <- done
+    log.Printf("%s finished", who)
 }
 
 
@@ -201,37 +305,54 @@ func main(){
 
     work := make(chan map[string]*dynamodb.Attribute, *numIn)
     work2 := make(chan map[string]*dynamodb.Attribute, WORK2_BUFFER)
-    done := make(chan bool)
+    done := make(chan string)
+    stats := make(chan Stat)
+
+    go stat_collect_thread(stats, done)
+
+    // this one never requires a done signal
+    go monitor_thread()
 
     // read (4) => speed regulator (1) => write (4)
-
     for i := 0; i < *numIn; i++ {
         go read(
-            *tableSrc, &auth, aws_region, default_cond, i, *numIn,  work, done)
+            *tableSrc, &auth, aws_region, 
+            default_cond, i, *numIn,  work, done, stats)
     }
 
     // start a regulator to control the speed
-    go regulator_thread(*tps, work, work2)
+    go regulator_thread(*tps, 
+        work, work2, done)
+
 
     for j := 0; j < *numOut; j++ {
         go write(
-            *tableDst, &auth, aws_region, *batchSize, work2, done)
+            j,
+            *tableDst, &auth, aws_region, 
+            *batchSize, work2, done, stats)
     }
+
+    show_stat()
 
     //wait for read
     for i :=0 ; i < *numIn; i ++ {
-        <-done
+        drain(done)
     }
     close(work)
 
     // wait for regulator
-    <-done
+    drain(done)
 
     close(work2)
 
     //wait for write
     for j := 0; j < *numOut; j++ {
-        <-done
+        drain(done)
     }
-    close(done)
+
+    close(stats)
+    // for stat_collector
+    drain(done)
+
+    show_stat()
 }
