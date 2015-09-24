@@ -6,6 +6,7 @@ import (
     "time"
     "fmt"
     "sync"
+    "strings"
 
     "github.com/AdRoll/goamz/aws"
     "github.com/AdRoll/goamz/dynamodb"
@@ -89,9 +90,6 @@ func stat_collect_thread(stats chan Stat,
 
     done <- "stat_collector"
 }
-
-
-
 
 func read(tableName string, auth *aws.Auth, region aws.Region,
         attributeComparisons []dynamodb.AttributeComparison, 
@@ -269,22 +267,58 @@ func map_to_item(obj map[string]*dynamodb.Attribute) *[]dynamodb.Attribute {
     return &items
 }
 
-func monitor_thread(){
+func monitor_thread(stat_show *StatShow){
     c := time.Tick(1 * time.Second)
     for _ = range c {
-        show_stats()
+        stat_show.show()
     }
 }
 
 var SHOW_STAT = &sync.Mutex{}
 
-func show_stats(){
-    SHOW_STAT.Lock()
-    defer SHOW_STAT.Unlock()
+type StatShow struct {
+    last_call time.Time
+    last_count int64
+    lock *sync.Mutex
+}
+
+func newStatShow() *StatShow {
+    return &StatShow {
+        last_call: time.Now(),
+        lock: &sync.Mutex{},
+        last_count: 0,
+    }
+}
+
+func (self *StatShow) show(){
+    self.lock.Lock()
+    defer self.lock.Unlock()
     fmt.Printf("\033[H\033[2J")
+    tps := self.calcTps()
     for k, v := range GLOBAL_STATS{
         fmt.Printf("%s: %v\n", k, v)
     }
+
+    fmt.Printf("TPS: %v", tps)
+}
+
+func (self *StatShow) calcTps() float64 {
+    now := time.Now()
+    duration := now.Sub(self.last_call)
+
+    count := int64(0)
+    for k, v := range GLOBAL_STATS{
+        if strings.HasSuffix(k, ".ok:write") {
+            count += int64(v)
+        }
+    }
+
+    tps := float64( count - self.last_count ) / duration.Seconds()
+
+    self.last_call = now
+    self.last_count = count
+
+    return tps
 }
 
 func drain(done chan string){
@@ -298,6 +332,7 @@ func main(){
     default_cond  := []dynamodb.AttributeComparison{}
     auth, err := aws.GetAuth("", "", "", time.Now())
     aws_region := aws.Regions[*region]
+    stat_show := newStatShow()
 
     if err != nil {
         log.Fatal("Failed to auth", err)
@@ -311,7 +346,7 @@ func main(){
     go stat_collect_thread(stats, done)
 
     // this one never requires a done signal
-    go monitor_thread()
+    go monitor_thread(stat_show)
 
     // read (4) => speed regulator (1) => write (4)
     for i := 0; i < *numIn; i++ {
@@ -332,7 +367,7 @@ func main(){
             *batchSize, work2, done, stats)
     }
 
-    show_stats()
+    stat_show.show()
 
     //wait for read
     for i :=0 ; i < *numIn; i ++ {
@@ -354,5 +389,5 @@ func main(){
     // for stat_collector
     drain(done)
 
-    show_stats()
+    stat_show.show()
 }
