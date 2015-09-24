@@ -323,7 +323,7 @@ func (self *StatShow) calcTps() float64 {
 
 func drain(done chan string){
     who := <- done
-    log.Printf("%s finished", who)
+    fmt.Printf("%s finished", who)
 }
 
 
