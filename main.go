@@ -332,7 +332,7 @@ func main(){
             *batchSize, work2, done, stats)
     }
 
-    show_stat()
+    show_stats()
 
     //wait for read
     for i :=0 ; i < *numIn; i ++ {
@@ -354,5 +354,5 @@ func main(){
     // for stat_collector
     drain(done)
 
-    show_stat()
+    show_stats()
 }
