@@ -127,7 +127,7 @@ func read(tableName string, auth *aws.Auth, region aws.Region,
             count += 1
         }
 
-        if count >= 1000 {
+        if count >= 100 {
             // send stat
             stats <- Stat { src, optype, count }
             count = 0
@@ -142,7 +142,7 @@ func read(tableName string, auth *aws.Auth, region aws.Region,
                     work <- item
                     count += 1
 
-                    if count >= 1000 {
+                    if count >= 100 {
                         // send stat
                         stats <- Stat { src, optype, count }
                         count = 0
