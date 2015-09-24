@@ -76,7 +76,7 @@ func regulator_thread(desire_tps int,
 func stat_collect_thread(stats chan Stat, 
     done chan string){
     for s := range stats {
-        key := fmt.Sprint("%s.%s", s.src, s.op_type)
+        key := fmt.Sprintf("%s.%s", s.src, s.op_type)
         total, ok := GLOBAL_STATS[key]
 
         if ok != true {
@@ -270,15 +270,15 @@ func map_to_item(obj map[string]*dynamodb.Attribute) *[]dynamodb.Attribute {
 }
 
 func monitor_thread(){
-    c := time.Tick(1000 * time.Second)
+    c := time.Tick(1 * time.Second)
     for _ = range c {
-        show_stat()
+        show_stats()
     }
 }
 
 var SHOW_STAT = &sync.Mutex{}
 
-func show_stat(){
+func show_stats(){
     SHOW_STAT.Lock()
     defer SHOW_STAT.Unlock()
     fmt.Printf("\033[H\033[2J")
