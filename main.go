@@ -371,7 +371,8 @@ TPS Breakdown:
     Writers: {{range .WritersTps}} {{ .Src }}: {{ .Count }}, {{end}}
 {{ if .EventStats }}
 Events:
-  {{ range $key, $value := .EventStats }}{{ $key }}: {{ $value }}{{ end }}
+    {{ range $key, $value := .EventStats }}{{ $key }}: {{ $value }}
+    {{ end }}
 {{ end }}
 {{ if .Doners }}
 Done:
