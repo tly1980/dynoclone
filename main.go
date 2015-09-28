@@ -370,9 +370,8 @@ TPS Breakdown:
     Readers: {{range .ReadersTps}} {{ .Src }}: {{ .Count }}, {{end}}
     Writers: {{range .WritersTps}} {{ .Src }}: {{ .Count }}, {{end}}
 {{ if .EventStats }}
-  {{ range $key, $value := .EventStats }}
-   {{ $key }}: {{ $value }}
-  {{ end }}
+Events:
+  {{ range $key, $value := .EventStats }}{{ $key }}: {{ $value }}{{ end }}
 {{ end }}
 {{ if .Doners }}
 Done:
