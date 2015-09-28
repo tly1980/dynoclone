@@ -330,7 +330,8 @@ type Monitor struct {
     Doners []string
 
     events chan Event
-    event_map map[string]int64
+    event_stats map[string]int64
+    EventStats map[string]int64
     template *template.Template
 
     done chan string
@@ -348,24 +349,26 @@ func newMonitor(
     done chan string, events chan Event,
     readers []*Reader, writers []*Writer) *Monitor {
     tpl := `{{ .Src}} => {{ .Dst }} 
-=================================================================================
+=========================================
 [Total]
     Read: {{ .ReadCount }}      Total Write: {{ .WriteCount }}
 [Progress]
-    Write/Total: {{ .WriteCount }} / {{ .SrcTotal }}, 
-    Write/Total P: {{ .Progress | printf "%.2f" }}: 
+    Written/Total: {{ .WriteCount }} / {{ .SrcTotal }}, 
+    Written/Total Percentage: {{ .Progress | printf "%.2f" }}%
 [TPS]
     Desire: {{ .DesireTps }}, Read: {{ .CurrentReadTps | printf "%.2f"  }}, Write: {{ .CurrentWriteTps | printf "%.2f"  }}
-
 [TPS Breakdown]
     Readers: {{range .ReadersTps}} {{ .Src }}: {{ .Count }}, {{end}}
     Writers: {{range .WritersTps}} {{ .Src }}: {{ .Count }}, {{end}}
-
+{{ if .EventStats }}
+  {{ range $key, $value := .EventStats }}
+   {{ $key }}: {{ $value }}
+  {{ end }}
+{{ end }}
 {{ if .Doners }}
 [Done]
     {{range .Doners}} {{.}}, {{end}}
-{{ end }}
-`
+{{ end }}`
 
     return &Monitor {
         lock: &sync.Mutex{},
@@ -388,8 +391,10 @@ func newMonitor(
         writers: writers,
 
         events: events,
-        event_map: make(map[string]int64),
-        template: template.Must(template.New("out").Parse(tpl)),
+        event_stats: make(map[string]int64),
+        EventStats: make(map[string]int64),
+        template: template.Must(
+            template.New("monitorOutput").Parse(tpl)),
 
         done: done,
     }
@@ -413,14 +418,23 @@ func (self *Monitor) show(){
     self.template.Execute(os.Stdout, *self)
 }
 
+func (self *Monitor) update_EventStat(){
+    self.lock.Lock()
+    defer self.lock.Unlock()
+    for k,v := range self.event_stats {
+        self.EventStats[k] = v
+    }
+}
+
 func (self *Monitor) collect_event(){
     defer finish(self.done, "monitor")
     for e := range self.events {
         // ignoring the detail error
         k := fmt.Sprintf("%s|%s", e.src, e.category)
-        count, _ := self.event_map[k]
+        count, _ := self.event_stats[k]
         count += 1
-        self.event_map[k] = count
+        self.event_stats[k] = count
+        self.update_EventStat()
     }
 }
 
