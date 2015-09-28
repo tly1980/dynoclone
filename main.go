@@ -9,6 +9,7 @@ import (
 
     "github.com/AdRoll/goamz/aws"
     "github.com/AdRoll/goamz/dynamodb"
+    "text/template"
 )
 
 var numIn = flag.Int("numIn", 4, "Number of DynamoDB read thread")
@@ -307,45 +308,73 @@ func map_to_item(obj map[string]*dynamodb.Attribute) *[]dynamodb.Attribute {
 
 
 type Monitor struct {
-    last_call time.Time
-    write_count int64
     lock *sync.Mutex
-    src_name string
-    dst_name string
-    src_total int64
-    desire_tps int
-    events chan Event
+
+    Src string
+    Dst string
+    SrcTotal int64
+    DesireTps int
+    last_call time.Time
+
+    ReadCount int64
+    WriteCount int64
+    CurrentReadTps float64
+    CurrentWriteTps float64
+
+    ReadersTps []TpsStat
+    WritersTps []TpsStat
     readers []*Reader
     writers []*Writer
-    current_tps float64
-    stat_map map[string]int64
+
+    events chan Event
     event_map map[string]int64
+    template *template.Template
 }
 
+type TpsStat struct {
+    Src string
+    Count int64
+}
+
+
 func newMonitor(
-    src_name, dst_name string, 
+    src, dst string, 
     src_total int64, desire_tps int,
     events chan Event, readers []*Reader, writers []*Writer) *Monitor {
+    tpl := `
+Src: {{ .Src}}\t\tDst: {{ .Dst }}
+DesireTps: {{ DesireTps }}
+CurrentReadTps: {{ CurrentReadTps }}
+CurrentWriteTps: {{ CurrentWriteTps }}
+Readers: {{range .ReadersTps}} {{ .Src }}: {{ .Count }}\t{{end}}
+Writers: {{range .WritersTps}} {{ .Src }}: {{ .Count }}\t{{end}}
+`
+
     return &Monitor {
-        last_call: time.Now(),
         lock: &sync.Mutex{},
-        write_count: 0,
-        src_name: src_name,
-        dst_name: dst_name,
-        src_total: src_total,
-        desire_tps: desire_tps,
-        events: events,
+
+        Src: src,
+        Dst: dst,
+        SrcTotal: src_total,
+        DesireTps: desire_tps,
+        last_call: time.Now(),
+
+        ReadCount: 0,
+        WriteCount: 0,
+        CurrentReadTps: float64(0),
+        CurrentWriteTps: float64(0),
+
+        ReadersTps: nil,
+        WritersTps: nil,
         readers: readers,
         writers: writers,
-        current_tps: float64(0),
-        stat_map: make(map[string]int64),
+
+        events: events,
         event_map: make(map[string]int64),
+        template: template.Must(template.New("out").Parse(tpl)),
     }
 }
 
-func (self *Monitor) handle_event(){
-
-}
 
 func (self *Monitor) run(){
     c := time.Tick(1 * time.Second)
@@ -380,21 +409,33 @@ func (self *Monitor) collect_rw_stat() {
     // or before you call it, just accquire the lock first.
 
     write_count := int64(0)
+    read_count := int64(0)
+
+    writers_tps := []TpsStat {}
+    readers_tps := []TpsStat {}
+
     for _, w := range self.writers {
+        writers_tps = append(writers_tps, TpsStat{w.src, w.count})
         write_count += w.count
-        self.stat_map[w.src] = w.count
     }
 
+    self.WritersTps = writers_tps
+
     for _, r := range self.readers {
-        self.stat_map[r.src] = r.count
+        readers_tps = append(readers_tps, TpsStat{r.src, r.count})
+        read_count += r.count
     }
+
+    self.ReadersTps = readers_tps
 
     now := time.Now()
     duration := now.Sub(self.last_call)
-    self.current_tps = float64( write_count - self.write_count ) / duration.Seconds()
+    self.CurrentWriteTps = float64( write_count - self.WriteCount ) / duration.Seconds()
+    self.CurrentReadTps = float64( read_count - self.ReadCount ) / duration.Seconds()
 
     self.last_call = now
-    self.write_count = write_count
+    self.WriteCount = write_count
+    self.ReadCount = read_count
 }
 
 func drain(done chan string){
