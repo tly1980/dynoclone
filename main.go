@@ -6,7 +6,6 @@ import (
     "time"
     "fmt"
     "sync"
-    "strings"
 
     "github.com/AdRoll/goamz/aws"
     "github.com/AdRoll/goamz/dynamodb"
@@ -21,10 +20,9 @@ var tableSrc = flag.String("src", "", "Src table name")
 var tableDst = flag.String("dst", "", "Dst table name")
 var region = flag.String("r", "ap-southeast-2", "Region. Default would be Sydney.")
 
-var GLOBAL_STATS = map[string]int64{}
-
 const READ_BATCH = 100
 const WORK2_BUFFER = 10000
+const EVENTS_BUFFER = 10000
 var RETRY_SLEEP_SEQUENCE = []time.Duration{
     time.Millisecond * 400,
     time.Millisecond * 800,
@@ -33,17 +31,16 @@ var RETRY_SLEEP_SEQUENCE = []time.Duration{
     time.Millisecond * 6400,
 }
 
-type Stat struct {
+type Event struct {
     src string
-    op_type string
-    count int
+    category string
+    detail string
 }
 
 func finish(
     done chan string, role string){
     done <- role
 }
-
 
 func regulator_thread(desire_tps int, 
     work chan map[string]*dynamodb.Attribute,
@@ -53,8 +50,8 @@ func regulator_thread(desire_tps int,
 
     desire_tp_01s := desire_tps / 10
     duration_01s := 100 * time.Millisecond 
-    fmt.Printf("desire_tp_01s: %v, duration_01s: %v\n",
-        desire_tp_01s, duration_01s)
+    //fmt.Printf("desire_tp_01s: %v, duration_01s: %v\n",
+    //    desire_tp_01s, duration_01s)
     
     //defer close(tick) // cannot close receive only channel
     i := 0
@@ -73,38 +70,28 @@ func regulator_thread(desire_tps int,
     }
 }
 
-
-func stat_collect_thread(stats chan Stat, 
-    done chan string){
-    for s := range stats {
-        key := fmt.Sprintf("%s.%s", s.src, s.op_type)
-        total, ok := GLOBAL_STATS[key]
-
-        if ok != true {
-            total = int64(0)
-        }
-
-        total += int64(s.count)
-        GLOBAL_STATS[key] = total
-    }
-
-    done <- "stat_collector"
+type Reader struct {
+    src string
+    tableName string
+    auth *aws.Auth
+    region aws.Region
+    attributeComparisons []dynamodb.AttributeComparison
+    seg_id int
+    total_seg int
+    batch_size int
+    count int64
+    work chan map[string]*dynamodb.Attribute
+    done chan string
+    events chan Event
 }
 
-func read(tableName string, auth *aws.Auth, region aws.Region,
-        attributeComparisons []dynamodb.AttributeComparison, 
-        segid int, totalSeg int, 
-        work chan map[string]*dynamodb.Attribute,
-        done chan string,
-        stats chan Stat){
-    src := fmt.Sprintf("reader [%v]", segid)
-    defer finish(done, src) // To signal that job is done
-    
-    optype := "ok:read"
-    server := dynamodb.New(*auth, region)
+func (self *Reader) run(){
+    defer finish(self.done, self.src) // To signal that job is done
+
+    server := dynamodb.New(*self.auth, self.region)
 
     //just test the connection to dyno table
-    tableDesc, err := server.DescribeTable(tableName)
+    tableDesc, err := server.DescribeTable(self.tableName)
     if err != nil {
         log.Fatal("Could not DescribeTable", err)
     }
@@ -113,58 +100,120 @@ func read(tableName string, auth *aws.Auth, region aws.Region,
         log.Fatal("Could not BuildPrimaryKey", err)
     }
 
-    table := server.NewTable(tableName, pk)
+    table := server.NewTable(self.tableName, pk)
 
     items, startKey, err := table.ParallelScanPartialLimit(
-        attributeComparisons, nil, segid, totalSeg, READ_BATCH)
+        self.attributeComparisons, nil, 
+        self.seg_id, self.total_seg, int64(self.batch_size))
 
-    count := 0 
     if err == nil {
         for _, item := range items {
-            work <- item
-            count += 1
+            self.work <- item
+            self.count += 1
         }
-
-        if count >= 100 {
-            // send stat
-            stats <- Stat { src, optype, count }
-            count = 0
-        }
-
 
         for startKey != nil {
             items, startKey, err = table.ParallelScanPartialLimit(
-                attributeComparisons, startKey, segid, totalSeg, READ_BATCH)
+                self.attributeComparisons, startKey, 
+                self.seg_id, self.total_seg, int64(self.batch_size))
+
             if err == nil {
                 for _, item := range items {
-                    work <- item
-                    count += 1
-
-                    if count >= 100 {
-                        // send stat
-                        stats <- Stat { src, optype, count }
-                        count = 0
-                    }
-
+                    self.work <- item
+                    self.count += 1
                 }
 
             }else{
-                // fixme
-                log.Fatal("failed to scan", err)
+                e := Event {
+                    self.src,
+                    "error",
+                    err.Error(),
+                }
+                self.events <- e
             }
         }
 
     }else{
-        // fixme
-        log.Fatal("failed to scan", err)
+        e := Event {
+            self.src,
+            "error",
+            err.Error(),
+        }
+        self.events <- e
     }
 
-    // send stat
-    stats <- Stat{src, optype, count}
+}
+
+func newReader(
+    tableName string,
+    auth *aws.Auth,
+    region aws.Region,
+    attributeComparisons []dynamodb.AttributeComparison,
+    seg_id int,
+    total_seg int,
+    batch_size int,
+    work chan map[string]*dynamodb.Attribute,
+    done chan string,
+    events chan Event) *Reader {
+
+    return &Reader{
+        fmt.Sprintf("Reader [id=%d]", seg_id),
+        tableName,
+        auth,
+        region,
+        attributeComparisons,
+        seg_id,
+        total_seg,
+        batch_size,
+        int64(0),
+        work,
+        done,
+        events,
+    }
 }
 
 
-func batch_shoot(src string, stats chan Stat, table *dynamodb.Table, batch [][]dynamodb.Attribute) error {
+
+type Writer struct {
+    src string
+    writer_id int
+    tableName string
+    auth *aws.Auth
+    region aws.Region
+    batch_size int
+    count int64
+    work chan map[string]*dynamodb.Attribute
+    done chan string
+    events chan Event
+}
+
+func newWriter (
+    writer_id int,
+    tableName string, 
+    auth *aws.Auth, 
+    region aws.Region,
+    batch_size int,
+    work chan map[string]*dynamodb.Attribute,
+    done chan string,
+    events chan Event) *Writer {
+
+    return &Writer{
+        fmt.Sprintf("Writer [id=%d]", writer_id),
+        writer_id,
+        tableName, 
+        auth, 
+        region,
+        batch_size,
+        0,
+        work,
+        done,
+        events,
+    }
+}
+
+func (self *Writer) batch_shoot(
+    table *dynamodb.Table,
+    batch [][]dynamodb.Attribute) error {
  
     m := map[string][][]dynamodb.Attribute{
         "Put": batch,
@@ -176,12 +225,11 @@ func batch_shoot(src string, stats chan Stat, table *dynamodb.Table, batch [][]d
     var unprocessed map[string]interface {}
     max_retry_seq := len(RETRY_SLEEP_SEQUENCE) - 1
 
-
     for i, t := range RETRY_SLEEP_SEQUENCE {
         unprocessed, err = bw.Execute()
 
         if err == nil && len(unprocessed) == 0 {
-            stats <- Stat {src, "ok:write", len(batch)}
+            self.count += int64(len(batch))
             return nil
         }
 
@@ -192,33 +240,20 @@ func batch_shoot(src string, stats chan Stat, table *dynamodb.Table, batch [][]d
             bw = table.BatchWriteItems(m)
 
             if i < max_retry_seq {
-                stats <- Stat { src, "resend", 1}
+                self.events <- Event { self.src, "resend", err.Error()}
             }
         }
-    }
-
-    stats <- Stat { 
-        src, 
-        fmt.Sprintf("err:%s", err.Error()), 
-        1,
     }
 
     return err
 }
 
-func write(
-    writer_id int,
-    tableName string, auth *aws.Auth, region aws.Region,
-    batchSize int,
-    work chan map[string]*dynamodb.Attribute,
-    done chan string,
-    stats chan Stat){
-    src := fmt.Sprintf("writer [%d]", writer_id)
-    defer finish(done, src) // To signal that job is done
-    server := dynamodb.New(*auth, region)
+func (self *Writer) run(){
+    defer finish(self.done, self.src) // To signal that job is done
+    server := dynamodb.New(*self.auth, self.region)
 
     //just test the connection to dyno table
-    tableDesc, err := server.DescribeTable(tableName)
+    tableDesc, err := server.DescribeTable(self.tableName)
     if err != nil {
         log.Fatal("Could not DescribeTable", err)
     }
@@ -227,20 +262,21 @@ func write(
         log.Fatal("Could not BuildPrimaryKey", err)
     }
 
-
-    table := server.NewTable(tableName, pk)
+    table := server.NewTable(self.tableName, pk)
     batch := [][]dynamodb.Attribute{}
 
-    for w := range work {
+    for w := range self.work {
         item := map_to_item(w)
         batch = append(batch, *item)
         
-        if len(batch) == batchSize {
-            err = batch_shoot(src, stats, table, batch)
+        if len(batch) == self.batch_size {
+            err = self.batch_shoot(table, batch)
             if err != nil {
-                // fixme
-                log.Printf("Failed to save DB(1): %v\n", err.Error())
-                //log.Printf("Batch =: %v\n", batch)
+                self.events <- Event { 
+                    self.src, 
+                    "error",
+                    err.Error(),
+                }
             }
             batch = nil
         }
@@ -248,11 +284,13 @@ func write(
 
     if len(batch) > 0 {
         // will do that again if batch isn't empty
-        err = batch_shoot(src, stats, table, batch)
+        err = self.batch_shoot(table, batch)
         if err != nil {
-            // fixme
-            log.Printf("Failed to save DB(2): %v\n", err.Error())
-            //log.Printf("Batch =: %v\n", batch)
+            self.events <- Event { 
+                self.src,
+                "error",
+                err.Error(),
+            }
         }
         batch = nil
     }
@@ -267,63 +305,123 @@ func map_to_item(obj map[string]*dynamodb.Attribute) *[]dynamodb.Attribute {
     return &items
 }
 
-func monitor_thread(stat_show *StatShow){
-    c := time.Tick(1 * time.Second)
-    for _ = range c {
-        stat_show.show()
-    }
-}
 
-var SHOW_STAT = &sync.Mutex{}
-
-type StatShow struct {
+type Monitor struct {
     last_call time.Time
-    last_count int64
+    write_count int64
     lock *sync.Mutex
+    src_name string
+    dst_name string
+    src_total int64
+    desire_tps int
+    events chan Event
+    readers []*Reader
+    writers []*Writer
+    current_tps float64
+    stat_map map[string]int64
+    event_map map[string]int64
 }
 
-func newStatShow() *StatShow {
-    return &StatShow {
+func newMonitor(
+    src_name, dst_name string, 
+    src_total int64, desire_tps int,
+    events chan Event, readers []*Reader, writers []*Writer) *Monitor {
+    return &Monitor {
         last_call: time.Now(),
         lock: &sync.Mutex{},
-        last_count: 0,
+        write_count: 0,
+        src_name: src_name,
+        dst_name: dst_name,
+        src_total: src_total,
+        desire_tps: desire_tps,
+        events: events,
+        readers: readers,
+        writers: writers,
+        current_tps: float64(0),
+        stat_map: make(map[string]int64),
+        event_map: make(map[string]int64),
     }
 }
 
-func (self *StatShow) show(){
+func (self *Monitor) handle_event(){
+
+}
+
+func (self *Monitor) run(){
+    c := time.Tick(1 * time.Second)
+    for _ = range c {
+        self.show()
+    }
+}
+
+
+func (self *Monitor) show(){
     self.lock.Lock()
     defer self.lock.Unlock()
+    self.collect_rw_stat()
+    self.collect_event()
     fmt.Printf("\033[H\033[2J")
-    tps := self.calcTps()
-    for k, v := range GLOBAL_STATS{
-        fmt.Printf("%s: %v\n", k, v)
-    }
-
-    fmt.Printf("TPS: %v", tps)
 }
 
-func (self *StatShow) calcTps() float64 {
-    now := time.Now()
-    duration := now.Sub(self.last_call)
+func (self *Monitor) collect_event(){
+    for e := range self.events {
+        // ignoring the detail error
+        k := fmt.Sprintf("%s|%s", e.src, e.category)
+        count, _ := self.event_map[k]
+        count += 1
+        self.event_map[k] = count
+    }
+}
 
-    count := int64(0)
-    for k, v := range GLOBAL_STATS{
-        if strings.HasSuffix(k, ".ok:write") {
-            count += int64(v)
-        }
+
+func (self *Monitor) collect_rw_stat() {
+    // this function should only be called in show
+    // as show() accquired the lock.
+    // or before you call it, just accquire the lock first.
+
+    write_count := int64(0)
+    for _, w := range self.writers {
+        write_count += w.count
+        self.stat_map[w.src] = w.count
     }
 
-    tps := float64( count - self.last_count ) / duration.Seconds()
+    for _, r := range self.readers {
+        self.stat_map[r.src] = r.count
+    }
+
+    now := time.Now()
+    duration := now.Sub(self.last_call)
+    self.current_tps = float64( write_count - self.write_count ) / duration.Seconds()
 
     self.last_call = now
-    self.last_count = count
-
-    return tps
+    self.write_count = write_count
 }
 
 func drain(done chan string){
     who := <- done
     fmt.Printf("%s finished", who)
+}
+
+func sniff(auth *aws.Auth,
+        region aws.Region, 
+        src string,
+        dst string) (*dynamodb.TableDescriptionT, *dynamodb.TableDescriptionT, error ) {
+    server := dynamodb.New(*auth, region)
+
+    //just test the connection to dyno table
+    srcDesc, err := server.DescribeTable(src)
+
+    if err != nil {
+        return nil, nil, err
+    }
+
+    dstDesc, err := server.DescribeTable(dst)
+
+    if err != nil {
+        return nil, nil, err
+    }
+
+    return srcDesc, dstDesc, nil
 }
 
 
@@ -332,27 +430,42 @@ func main(){
     default_cond  := []dynamodb.AttributeComparison{}
     auth, err := aws.GetAuth("", "", "", time.Now())
     aws_region := aws.Regions[*region]
-    stat_show := newStatShow()
+    
 
     if err != nil {
         log.Fatal("Failed to auth", err)
     }
 
+    srcDesc, _, err := sniff(
+        &auth, aws_region, *tableSrc, *tableDst)
+
+    if err != nil {
+        log.Fatal("Failed to describe table.", err)
+    }
+
     work := make(chan map[string]*dynamodb.Attribute, *numIn)
     work2 := make(chan map[string]*dynamodb.Attribute, WORK2_BUFFER)
     done := make(chan string)
-    stats := make(chan Stat)
-
-    go stat_collect_thread(stats, done)
+    events := make(chan Event, EVENTS_BUFFER)
+    var readers = make([]*Reader, *numIn)
+    var writers = make([]*Writer, *numOut)
+    mon := newMonitor(*tableSrc, *tableDst,
+        srcDesc.ItemCount, *tps,
+        events, readers, writers)
 
     // this one never requires a done signal
-    go monitor_thread(stat_show)
+    go mon.run()
 
     // read (4) => speed regulator (1) => write (4)
     for i := 0; i < *numIn; i++ {
-        go read(
-            *tableSrc, &auth, aws_region, 
-            default_cond, i, *numIn,  work, done, stats)
+        r := newReader( *tableSrc, &auth, aws_region,
+            default_cond, 
+            i, *numIn, READ_BATCH,
+            work,
+            done, events)
+
+        readers[i] = r
+        go r.run()
     }
 
     // start a regulator to control the speed
@@ -361,13 +474,14 @@ func main(){
 
 
     for j := 0; j < *numOut; j++ {
-        go write(
-            j,
+        w := newWriter(j,
             *tableDst, &auth, aws_region, 
-            *batchSize, work2, done, stats)
+            *batchSize, work2, done, events)
+        writers[j] = w
+        go w.run()
     }
 
-    stat_show.show()
+    mon.show()
 
     //wait for read
     for i :=0 ; i < *numIn; i ++ {
@@ -385,9 +499,9 @@ func main(){
         drain(done)
     }
 
-    close(stats)
+    close(events)
     // for stat_collector
     drain(done)
 
-    stat_show.show()
+    mon.show()
 }
