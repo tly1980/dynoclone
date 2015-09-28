@@ -325,10 +325,13 @@ type Monitor struct {
     WritersTps []TpsStat
     readers []*Reader
     writers []*Writer
+    Doners []string
 
     events chan Event
     event_map map[string]int64
     template *template.Template
+
+    done chan string
 }
 
 type TpsStat struct {
@@ -340,7 +343,8 @@ type TpsStat struct {
 func newMonitor(
     src, dst string, 
     src_total int64, desire_tps int,
-    events chan Event, readers []*Reader, writers []*Writer) *Monitor {
+    done chan string, events chan Event,
+    readers []*Reader, writers []*Writer) *Monitor {
     tpl := `
 Src: {{ .Src}}\t\tDst: {{ .Dst }}
 DesireTps: {{ DesireTps }}
@@ -363,6 +367,7 @@ Writers: {{range .WritersTps}} {{ .Src }}: {{ .Count }}\t{{end}}
         WriteCount: 0,
         CurrentReadTps: float64(0),
         CurrentWriteTps: float64(0),
+        Doners: []string{},
 
         ReadersTps: nil,
         WritersTps: nil,
@@ -372,6 +377,8 @@ Writers: {{range .WritersTps}} {{ .Src }}: {{ .Count }}\t{{end}}
         events: events,
         event_map: make(map[string]int64),
         template: template.Must(template.New("out").Parse(tpl)),
+
+        done: done,
     }
 }
 
@@ -393,6 +400,7 @@ func (self *Monitor) show(){
 }
 
 func (self *Monitor) collect_event(){
+    defer finish(self.done, "monitor")
     for e := range self.events {
         // ignoring the detail error
         k := fmt.Sprintf("%s|%s", e.src, e.category)
@@ -438,9 +446,10 @@ func (self *Monitor) collect_rw_stat() {
     self.ReadCount = read_count
 }
 
-func drain(done chan string){
-    who := <- done
-    fmt.Printf("%s finished", who)
+func (self *Monitor) drain(){
+    who := <- self.done
+    self.Doners = append(self.Doners, who)
+    //fmt.Printf("%s finished", who)
 }
 
 func sniff(auth *aws.Auth,
@@ -492,7 +501,7 @@ func main(){
     var writers = make([]*Writer, *numOut)
     mon := newMonitor(*tableSrc, *tableDst,
         srcDesc.ItemCount, *tps,
-        events, readers, writers)
+        done, events, readers, writers)
 
     // this one never requires a done signal
     go mon.run()
@@ -524,25 +533,25 @@ func main(){
 
     mon.show()
 
-    //wait for read
+    //wait for reader
     for i :=0 ; i < *numIn; i ++ {
-        drain(done)
+        mon.drain()
     }
     close(work)
 
     // wait for regulator
-    drain(done)
+    mon.drain()
 
     close(work2)
 
-    //wait for write
+    //wait for writer
     for j := 0; j < *numOut; j++ {
-        drain(done)
+        mon.drain()
     }
 
     close(events)
-    // for stat_collector
-    drain(done)
+    // for mon
+    mon.drain()
 
     mon.show()
 }
