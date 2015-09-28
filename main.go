@@ -6,6 +6,7 @@ import (
     "time"
     "fmt"
     "sync"
+    "os"
 
     "github.com/AdRoll/goamz/aws"
     "github.com/AdRoll/goamz/dynamodb"
@@ -318,6 +319,7 @@ type Monitor struct {
 
     ReadCount int64
     WriteCount int64
+    Progress float64
     CurrentReadTps float64
     CurrentWriteTps float64
 
@@ -345,13 +347,24 @@ func newMonitor(
     src_total int64, desire_tps int,
     done chan string, events chan Event,
     readers []*Reader, writers []*Writer) *Monitor {
-    tpl := `
-Src: {{ .Src}}\t\tDst: {{ .Dst }}
-DesireTps: {{ DesireTps }}
-CurrentReadTps: {{ CurrentReadTps }}
-CurrentWriteTps: {{ CurrentWriteTps }}
-Readers: {{range .ReadersTps}} {{ .Src }}: {{ .Count }}\t{{end}}
-Writers: {{range .WritersTps}} {{ .Src }}: {{ .Count }}\t{{end}}
+    tpl := `{{ .Src}} => {{ .Dst }} 
+=================================================================================
+[Total]
+    Read: {{ .ReadCount }}      Total Write: {{ .WriteCount }}
+[Progress]
+    Write/Total: {{ .WriteCount }} / {{ .SrcTotal }}, 
+    Write/Total P: {{ .Progress | printf "%.2f" }}: 
+[TPS]
+    Desire: {{ .DesireTps }}, Read: {{ .CurrentReadTps | printf "%.2f"  }}, Write: {{ .CurrentWriteTps | printf "%.2f"  }}
+
+[TPS Breakdown]
+    Readers: {{range .ReadersTps}} {{ .Src }}: {{ .Count }}, {{end}}
+    Writers: {{range .WritersTps}} {{ .Src }}: {{ .Count }}, {{end}}
+
+{{ if .Doners }}
+[Done]
+    {{range .Doners}} {{.}}, {{end}}
+{{ end }}
 `
 
     return &Monitor {
@@ -384,6 +397,7 @@ Writers: {{range .WritersTps}} {{ .Src }}: {{ .Count }}\t{{end}}
 
 
 func (self *Monitor) run(){
+    go self.collect_event()
     c := time.Tick(1 * time.Second)
     for _ = range c {
         self.show()
@@ -395,8 +409,8 @@ func (self *Monitor) show(){
     self.lock.Lock()
     defer self.lock.Unlock()
     self.collect_rw_stat()
-    self.collect_event()
     fmt.Printf("\033[H\033[2J")
+    self.template.Execute(os.Stdout, *self)
 }
 
 func (self *Monitor) collect_event(){
@@ -440,6 +454,7 @@ func (self *Monitor) collect_rw_stat() {
     duration := now.Sub(self.last_call)
     self.CurrentWriteTps = float64( write_count - self.WriteCount ) / duration.Seconds()
     self.CurrentReadTps = float64( read_count - self.ReadCount ) / duration.Seconds()
+    self.Progress = float64(write_count * 100) / float64(self.SrcTotal )
 
     self.last_call = now
     self.WriteCount = write_count
