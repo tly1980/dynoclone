@@ -7,6 +7,7 @@ import (
     "fmt"
     "sync"
     "os"
+    "strings"
 
     "github.com/AdRoll/goamz/aws"
     "github.com/AdRoll/goamz/dynamodb"
@@ -48,7 +49,7 @@ func regulator_thread(desire_tps int,
     work chan map[string]*dynamodb.Attribute,
     work2 chan map[string]*dynamodb.Attribute,
     done chan string){
-    defer finish(done, "regulator")
+    defer finish(done, "Regulator")
 
     desire_tp_01s := desire_tps / 10
     duration_01s := 100 * time.Millisecond 
@@ -159,7 +160,7 @@ func newReader(
     events chan Event) *Reader {
 
     return &Reader{
-        fmt.Sprintf("Reader [id=%d]", seg_id),
+        fmt.Sprintf("R%04d", seg_id),
         tableName,
         auth,
         region,
@@ -200,7 +201,7 @@ func newWriter (
     events chan Event) *Writer {
 
     return &Writer{
-        fmt.Sprintf("Writer [id=%d]", writer_id),
+        fmt.Sprintf("W%04d", writer_id),
         writer_id,
         tableName, 
         auth, 
@@ -310,6 +311,10 @@ func map_to_item(obj map[string]*dynamodb.Attribute) *[]dynamodb.Attribute {
 
 type Monitor struct {
     lock *sync.Mutex
+    started_at time.Time
+    Elapsed time.Duration
+    Remain time.Duration
+    TitleBar string
 
     Src string
     Dst string
@@ -349,15 +354,19 @@ func newMonitor(
     done chan string, events chan Event,
     readers []*Reader, writers []*Writer) *Monitor {
     tpl := `{{ .Src}} => {{ .Dst }} 
-=========================================
-[Total]
-    Read: {{ .ReadCount }}      Total Write: {{ .WriteCount }}
-[Progress]
+{{ .TitleBar }}
+Time:
+    Elapsed: {{ .Elapsed }}
+    Remain: {{ .Remain }}
+Progress:
+    {{ .Progress | progressbar }} {{ .Progress | printf "%.2f" }} %
     Written/Total: {{ .WriteCount }} / {{ .SrcTotal }}, 
-    Written/Total Percentage: {{ .Progress | printf "%.2f" }}%
-[TPS]
-    Desire: {{ .DesireTps }}, Read: {{ .CurrentReadTps | printf "%.2f"  }}, Write: {{ .CurrentWriteTps | printf "%.2f"  }}
-[TPS Breakdown]
+    Read: {{ .ReadCount }}      Write: {{ .WriteCount }}
+TPS:
+    Desire: {{ .DesireTps }}
+    Instant Read: {{ .CurrentReadTps | printf "%.2f"  }}
+    Instant Write: {{ .CurrentWriteTps | printf "%.2f"  }}
+TPS Breakdown:
     Readers: {{range .ReadersTps}} {{ .Src }}: {{ .Count }}, {{end}}
     Writers: {{range .WritersTps}} {{ .Src }}: {{ .Count }}, {{end}}
 {{ if .EventStats }}
@@ -366,12 +375,16 @@ func newMonitor(
   {{ end }}
 {{ end }}
 {{ if .Doners }}
-[Done]
+Done:
     {{range .Doners}} {{.}}, {{end}}
 {{ end }}`
+    t := template.New("monitorOutput")
+    t = t.Funcs(template.FuncMap{"progressbar": ProgressBar})
+    t = template.Must(t.Parse(tpl))
 
     return &Monitor {
         lock: &sync.Mutex{},
+        started_at: time.Now(),
 
         Src: src,
         Dst: dst,
@@ -393,13 +406,12 @@ func newMonitor(
         events: events,
         event_stats: make(map[string]int64),
         EventStats: make(map[string]int64),
-        template: template.Must(
-            template.New("monitorOutput").Parse(tpl)),
+        template: t,
 
         done: done,
+        TitleBar: strings.Repeat("=", len(src) + len(dst) + 4),
     }
 }
-
 
 func (self *Monitor) run(){
     go self.collect_event()
@@ -418,6 +430,15 @@ func (self *Monitor) show(){
     self.template.Execute(os.Stdout, *self)
 }
 
+func ProgressBar(progress float64) string {
+    completed := int(progress / 10)
+    if completed < 10{
+        return fmt.Sprintf("[%s>%s]", strings.Repeat("=", completed), strings.Repeat(".", 10-completed))
+    }else{
+        return fmt.Sprintf("[%s]", strings.Repeat("=", 12))
+    }
+}
+
 func (self *Monitor) update_EventStat(){
     self.lock.Lock()
     defer self.lock.Unlock()
@@ -427,7 +448,7 @@ func (self *Monitor) update_EventStat(){
 }
 
 func (self *Monitor) collect_event(){
-    defer finish(self.done, "monitor")
+    defer finish(self.done, "Monitor")
     for e := range self.events {
         // ignoring the detail error
         k := fmt.Sprintf("%s|%s", e.src, e.category)
@@ -473,6 +494,16 @@ func (self *Monitor) collect_rw_stat() {
     self.last_call = now
     self.WriteCount = write_count
     self.ReadCount = read_count
+
+    self.Elapsed = time.Now().Sub(self.started_at)
+    if self.CurrentWriteTps > 0 && self.SrcTotal != self.WriteCount {
+        self.Remain = time.Duration(int64(float64( self.SrcTotal - self.WriteCount ) / self.CurrentWriteTps)) * time.Second
+    } else if self.SrcTotal == self.WriteCount {
+        self.Remain = time.Duration(0)
+    }else{
+        self.Remain = time.Duration(9999) * time.Hour
+    }
+
 }
 
 func (self *Monitor) drain(){
