@@ -44,7 +44,18 @@ func (self *JsonWriter) Run(work chan map[string]*dynamodb.Attribute){
     kvp := []string{}
     for w := range self.work {
         for k, v := range w {
-            json_val, _ := json.Marshal(v)
+            var json_val []byte
+
+            if v.Value != "" {
+                json_val, _ = json.Marshal(v.Value)
+
+            }else if v.ListValues != nil {
+                json_val, _ = json.Marshal(v.ListValues)
+
+            }else if v.MapValues != nil {
+                json_val, _ = json.Marshal(v.MapValues)
+            }
+
             s := fmt.Sprintf(`"%s":%s`, k, json_val)
             kvp = append(kvp, s)
         }
