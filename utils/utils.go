@@ -253,25 +253,17 @@ func RegulatorThread(desire_tps int,
 
 
 func Sniff(auth *aws.Auth,
-        region aws.Region, 
-        src string,
-        dst string) (*dynamodb.TableDescriptionT, *dynamodb.TableDescriptionT, error ) {
+        region aws.Region, src string) (*dynamodb.TableDescriptionT, error) {
     server := dynamodb.New(*auth, region)
 
     //just test the connection to dyno table
     srcDesc, err := server.DescribeTable(src)
 
     if err != nil {
-        return nil, nil, err
+        return nil, err
     }
 
-    dstDesc, err := server.DescribeTable(dst)
-
-    if err != nil {
-        return nil, nil, err
-    }
-
-    return srcDesc, dstDesc, nil
+    return srcDesc, nil
 }
 
 

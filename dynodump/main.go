@@ -35,8 +35,8 @@ func main(){
         log.Fatal("Failed to auth", err)
     }
 
-    srcDesc, _, err := utils.Sniff(
-        &auth, aws_region, *tableSrc, "")
+    srcDesc, err := utils.Sniff(
+        &auth, aws_region, *tableSrc)
 
     if err != nil {
         log.Fatal("Failed to describe table.", err)
