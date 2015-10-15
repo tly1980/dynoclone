@@ -65,6 +65,8 @@ func NewJsonWriter(
 
 func simple_render(w map[string]*dynamodb.Attribute) string {
     kvp := []string{}
+    json_null := []byte("null")
+
     for k, v := range w {
         var json_val []byte
 
@@ -76,7 +78,10 @@ func simple_render(w map[string]*dynamodb.Attribute) string {
 
         }else if v.MapValues != nil {
             json_val, _ = json.Marshal(v.MapValues)
+        }else {
+            json_val = json_null
         }
+
         s := fmt.Sprintf(`"%s":%s`, k, json_val)
         kvp = append(kvp, s)
     }
@@ -100,6 +105,7 @@ func dynoformat_render(w map[string]*dynamodb.Attribute) string {
 
 func (self *JsonWriter) Run(work chan map[string]*dynamodb.Attribute){
     defer self.writer.Flush()
+    defer utils.Finish(self.done, self.src)
 
     renderf := simple_render
 
