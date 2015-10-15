@@ -28,8 +28,8 @@ type DynoWriter struct {
 
 func NewDynoWriter (
     writer_id int,
-    tableName string, 
-    auth *aws.Auth, 
+    tableName string,
+    auth *aws.Auth,
     region aws.Region,
     batch_size int,
     work chan map[string]*dynamodb.Attribute,

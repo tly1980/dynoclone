@@ -12,5 +12,5 @@ type Reader interface{
 type Writer interface {
     Count() int64
     Src() string
-    Run(chan map[string]*dynamodb.Attribute)
+    Run(work chan map[string]*dynamodb.Attribute)
 }

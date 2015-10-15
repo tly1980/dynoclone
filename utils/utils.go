@@ -8,7 +8,10 @@ import (
     "fmt"
     "os"
 
-     "dynoclone/base"
+    "github.com/AdRoll/goamz/aws"
+    "github.com/AdRoll/goamz/dynamodb"
+
+    "dynoclone/base"
 )
 
 const READ_BATCH = 100
@@ -219,3 +222,56 @@ func Finish(
     done chan string, role string){
     done <- role
 }
+
+func RegulatorThread(desire_tps int, 
+    work chan map[string]*dynamodb.Attribute,
+    work2 chan map[string]*dynamodb.Attribute,
+    done chan string){
+    defer Finish(done, "Regulator")
+
+    desire_tp_01s := desire_tps / 10
+    duration_01s := 100 * time.Millisecond 
+    //fmt.Printf("desire_tp_01s: %v, duration_01s: %v\n",
+    //    desire_tp_01s, duration_01s)
+    
+    //defer close(tick) // cannot close receive only channel
+    i := 0
+    t1 := time.Now()
+    for w := range work {
+        work2 <- w
+        i++
+        if i % desire_tp_01s == 0 {
+            t2 := time.Now()
+            delta := duration_01s - t2.Sub(t1)
+            if delta > 0 {
+                time.Sleep(delta)
+            }
+            t1 = time.Now()
+        }
+    }
+}
+
+
+func Sniff(auth *aws.Auth,
+        region aws.Region, 
+        src string,
+        dst string) (*dynamodb.TableDescriptionT, *dynamodb.TableDescriptionT, error ) {
+    server := dynamodb.New(*auth, region)
+
+    //just test the connection to dyno table
+    srcDesc, err := server.DescribeTable(src)
+
+    if err != nil {
+        return nil, nil, err
+    }
+
+    dstDesc, err := server.DescribeTable(dst)
+
+    if err != nil {
+        return nil, nil, err
+    }
+
+    return srcDesc, dstDesc, nil
+}
+
+
