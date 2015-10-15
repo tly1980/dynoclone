@@ -21,6 +21,7 @@ var tps = flag.Int("tps", 1000, "Default TPS")
 
 var tableSrc = flag.String("src", "", "Src table name")
 var dstPath = flag.String("dst", "", "Dst table name")
+var exportFormat = flag.String("fmt", "dynojson", "format")
 var region = flag.String("r", "ap-southeast-2", "Region. Default would be Sydney.")
 
 
@@ -70,9 +71,9 @@ func main(){
     // start a regulator to control the speed
     go utils.RegulatorThread(*tps, work, work2, done)
 
-
     for j := 0; j < *numOut; j++ {
         w := writer.NewJsonWriter(
+            *exportFormat,
             *dstPath,
             j,
             work2, done, events)
