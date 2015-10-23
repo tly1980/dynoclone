@@ -11,7 +11,7 @@ import (
     "github.com/AdRoll/goamz/aws"
     "github.com/AdRoll/goamz/dynamodb"
 
-    "dynoclone/base"
+    "github.com/tly1980/dynoclone/base"
 )
 
 const READ_BATCH = 100

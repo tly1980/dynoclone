@@ -8,10 +8,10 @@ import (
     "github.com/AdRoll/goamz/aws"
     "github.com/AdRoll/goamz/dynamodb"
 
-    "dynoclone/utils"
-    "dynoclone/reader"
-    "dynoclone/writer"
-    "dynoclone/base"
+    "github.com/tly1980/dynoclone/utils"
+    "github.com/tly1980/dynoclone/reader"
+    "github.com/tly1980/dynoclone/writer"
+    "github.com/tly1980/dynoclone/base"
 )
 
 var numIn = flag.Int("numIn", 4, "Number of DynamoDB read thread")

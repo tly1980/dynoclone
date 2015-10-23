@@ -7,8 +7,8 @@ import (
     "github.com/AdRoll/goamz/aws"
     "github.com/AdRoll/goamz/dynamodb"
 
-    "dynoclone/utils"
-    "dynoclone/base"
+    "github.com/tly1980/dynoclone/utils"
+    "github.com/tly1980/dynoclone/base"
 )
 
 type DynoReader struct {
