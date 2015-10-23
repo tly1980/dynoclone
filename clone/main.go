@@ -52,28 +52,6 @@ func regulator_thread(desire_tps int,
     }
 }
 
-func sniff(auth *aws.Auth,
-        region aws.Region, 
-        src string,
-        dst string) (*dynamodb.TableDescriptionT, *dynamodb.TableDescriptionT, error ) {
-    server := dynamodb.New(*auth, region)
-
-    //just test the connection to dyno table
-    srcDesc, err := server.DescribeTable(src)
-
-    if err != nil {
-        return nil, nil, err
-    }
-
-    dstDesc, err := server.DescribeTable(dst)
-
-    if err != nil {
-        return nil, nil, err
-    }
-
-    return srcDesc, dstDesc, nil
-}
-
 
 func Main(argv []string){
     _flag.Parse(argv)
@@ -86,8 +64,8 @@ func Main(argv []string){
         log.Fatal("Failed to auth", err)
     }
 
-    srcDesc, _, err := sniff(
-        &auth, aws_region, *tableSrc, *tableDst)
+    srcDesc, err := utils.Sniff(
+        &auth, aws_region, *tableSrc)
 
     if err != nil {
         log.Fatal("Failed to describe table.", err)

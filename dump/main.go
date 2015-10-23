@@ -4,6 +4,7 @@ import (
     "flag"
     "log"
     "time"
+    "fmt"
 
     "github.com/AdRoll/goamz/aws"
     "github.com/AdRoll/goamz/dynamodb"
@@ -51,7 +52,8 @@ func Main(argv []string){
     events := make(chan utils.Event, utils.EVENTS_BUFFER)
     var readers = make([]base.Reader, *numIn)
     var writers = make([]base.Writer, *numOut)
-    mon := utils.NewMonitor(*tableSrc, *dstPath,
+    mon := utils.NewMonitor(*tableSrc,
+        fmt.Sprintf("%s [file] ", *dstPath),
         srcDesc.ItemCount, *tps,
         done, events, readers, writers)
 

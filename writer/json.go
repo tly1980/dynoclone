@@ -91,15 +91,14 @@ func simple_render(w map[string]*dynamodb.Attribute) string {
 }
 
 func dynoformat_render(w map[string]*dynamodb.Attribute) string {
-    kvp := []string{}
-    for k, v := range w {
-        _, json_val := json.Marshal(v)
-        s := fmt.Sprintf(`"%s":%s`, k, json_val)
-        kvp = append(kvp, s)
+    attrs := []string{}
+    for _, v := range w {
+        json_bytes, _ := json.Marshal(v)
+        attrs = append(attrs, string(json_bytes))
     }
 
     return fmt.Sprintf(
-            "{ %s }", strings.Join(kvp, ", "))
+            "[ %s ]", strings.Join(attrs, ", "))
 }
 
 
