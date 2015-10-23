@@ -140,8 +140,8 @@ func (self *Monitor) Show(){
     self.lock.Lock()
     defer self.lock.Unlock()
     self.collect_rw_stat()
-    fmt.Printf("\033[H\033[2J")
-    self.template.Execute(os.Stdout, *self)
+    fmt.Fprintf(os.Stderr, "\033[H\033[2J")
+    self.template.Execute(os.Stderr, *self)
 }
 
 func ProgressBar(progress float64) string {

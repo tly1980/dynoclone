@@ -19,7 +19,7 @@ func main() {
         clone.Main(argv)
       default:
         fmt.Fprintf(
-            os.Stderr, "Unsupported action: %s", action)
+            os.Stderr, "Unsupported action: %s\n", action)
         os.Exit(-1)
     }
 
