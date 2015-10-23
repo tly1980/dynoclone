@@ -1,4 +1,4 @@
-package main
+package dump
 
 import (
     "flag"
@@ -14,19 +14,21 @@ import (
     "github.com/tly1980/dynoclone/base"
 )
 
-var numIn = flag.Int("numIn", 4, "Number of DynamoDB read thread")
-var numOut = flag.Int("numOut", 1, "Number of DynamoDB read thread")
-var batchSize = flag.Int("batchSize", 10, "size for DynamoDB batch write")
-var tps = flag.Int("tps", 1000, "Default TPS")
+var _flag = flag.NewFlagSet("dump", flag.ContinueOnError)
 
-var tableSrc = flag.String("src", "", "Src table name")
-var dstPath = flag.String("dst", "", "Dst table name")
-var exportFormat = flag.String("fmt", "dynojson", "format")
-var region = flag.String("r", "ap-southeast-2", "Region. Default would be Sydney.")
+var numIn = _flag.Int("numIn", 4, "Number of DynamoDB read thread")
+var numOut = _flag.Int("numOut", 1, "Number of DynamoDB read thread")
+var batchSize = _flag.Int("batchSize", 10, "size for DynamoDB batch write")
+var tps = _flag.Int("tps", 1000, "Default TPS")
+
+var tableSrc = _flag.String("src", "", "Src table name")
+var dstPath = _flag.String("dst", "", "Dst table name")
+var exportFormat = _flag.String("fmt", "dynojson", "format")
+var region = _flag.String("r", "ap-southeast-2", "Region. Default would be Sydney.")
 
 
-func main(){
-    flag.Parse()
+func Main(argv []string){
+    _flag.Parse(argv)
     default_cond  := []dynamodb.AttributeComparison{}
     auth, err := aws.GetAuth("", "", "", time.Now())
     aws_region := aws.Regions[*region]

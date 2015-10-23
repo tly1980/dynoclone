@@ -1,4 +1,4 @@
-package main
+package clone
 
 import (
     "flag"
@@ -14,14 +14,15 @@ import (
     "github.com/tly1980/dynoclone/base"
 )
 
-var numIn = flag.Int("numIn", 4, "Number of DynamoDB read thread")
-var numOut = flag.Int("numOut", 4, "Number of DynamoDB read thread")
-var batchSize = flag.Int("batchSize", 10, "size for DynamoDB batch write")
-var tps = flag.Int("tps", 1000, "Default TPS")
+var _flag = flag.NewFlagSet("clone", flag.ContinueOnError)
+var numIn = _flag.Int("numIn", 4, "Number of DynamoDB read thread")
+var numOut = _flag.Int("numOut", 4, "Number of DynamoDB read thread")
+var batchSize = _flag.Int("batchSize", 10, "size for DynamoDB batch write")
+var tps = _flag.Int("tps", 1000, "Default TPS")
 
-var tableSrc = flag.String("src", "", "Src table name")
-var tableDst = flag.String("dst", "", "Dst table name")
-var region = flag.String("r", "ap-southeast-2", "Region. Default would be Sydney.")
+var tableSrc = _flag.String("src", "", "Src table name")
+var tableDst = _flag.String("dst", "", "Dst table name")
+var region = _flag.String("r", "ap-southeast-2", "Region. Default would be Sydney.")
 
 func regulator_thread(desire_tps int, 
     work chan map[string]*dynamodb.Attribute,
@@ -74,12 +75,12 @@ func sniff(auth *aws.Auth,
 }
 
 
-func main(){
-    flag.Parse()
+func Main(argv []string){
+    _flag.Parse(argv)
+
     default_cond  := []dynamodb.AttributeComparison{}
     auth, err := aws.GetAuth("", "", "", time.Now())
     aws_region := aws.Regions[*region]
-    
 
     if err != nil {
         log.Fatal("Failed to auth", err)
